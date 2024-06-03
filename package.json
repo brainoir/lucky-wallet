@@ -6,6 +6,7 @@
         "build bank": "blueprint build LuckyBank",
         "build sell": "blueprint build Sell",
         "wallet-generate": "ts-node ./some/generateAddr.ts",
+        "wallet-generate-sql": "ts-node ./some/generateAddrMySQL.ts",
         "sell-only-test": "jest Sell"
     },
     "devDependencies": {
@@ -24,6 +25,8 @@
         "typescript": "^5.4.3"
     },
     "dependencies": {
-        "@aws-crypto/sha256-js": "^5.2.0"
+        "@aws-crypto/sha256-js": "^5.2.0",
+        "moment-timezone": "^0.5.45",
+        "mysql2": "^3.10.0"
     }
 }
