@@ -7,6 +7,7 @@
         "build sell": "blueprint build Sell",
         "wallet-generate": "ts-node ./some/generateAddr.ts",
         "wallet-generate-sql": "ts-node ./some/generateAddrMySQL.ts",
+        "wallet-generate-sql2": "ts-node ./some/main.ts",
         "sell-only-test": "jest Sell"
     },
     "devDependencies": {
