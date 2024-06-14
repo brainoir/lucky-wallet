@@ -2,6 +2,11 @@ import moment from 'moment-timezone';
 import mysql from 'mysql2/promise';
 import { Worker } from 'worker_threads';
 import path from 'path';
+import chalk from 'chalk';
+import { SingleBar, Presets } from 'cli-progress';
+import { performance } from 'perf_hooks';
+
+const BATCH_SIZE = 5000;
 
 async function getCurrentIndexFromDatabase(connection: mysql.Connection): Promise<number> {
     const [rows] = await connection.execute('SELECT MAX(address_index) AS max_index FROM Addresses');
@@ -9,24 +14,31 @@ async function getCurrentIndexFromDatabase(connection: mysql.Connection): Promis
     return maxIndex || 60000001;
 }
 
-function createWorkerPool(numWorkers: number, workerFile: string, startIndex: number, endIndex: number): Promise<void>[] {
+function createWorkerPool(numWorkers: number, workerFile: string, startIndex: number, endIndex: number, workersIteration: number): Promise<void>[] {
     const workerPromises: Promise<void>[] = [];
+    const progressBars: SingleBar[] = [];
 
     for (let i = 0; i < numWorkers; i++) {
-        const workerStartIndex = startIndex + i * Math.ceil((endIndex - startIndex) / numWorkers);
-        const workerEndIndex = Math.min(startIndex + (i + 1) * Math.ceil((endIndex - startIndex) / numWorkers) - 1, endIndex);
+        const progressBar = new SingleBar({}, Presets.shades_classic);
+        progressBars.push(progressBar);
+
+        const workerStartIndex = startIndex + i * BATCH_SIZE + (BATCH_SIZE * numWorkers * workersIteration);
+        const workerEndIndex = Math.min(workerStartIndex + BATCH_SIZE - 1, endIndex);
         
         const worker = new Worker(workerFile, {
             workerData: {
                 startIndex: workerStartIndex,
                 endIndex: workerEndIndex
-            }
+            },
+            execArgv: ['-r', 'ts-node/register']
         });
 
         const workerPromise = new Promise<void>((resolve, reject) => {
-            worker.on('message', (message: { type: string }) => {
+            worker.on('message', (message: { type: string, currentIndex?: number }) => {
                 if (message.type === 'done' || message.type === 'finished') {
                     resolve();
+                } else if (message.type === 'info') {
+                    progressBar.update(message.currentIndex! - workerStartIndex);
                 }
             });
 
@@ -54,25 +66,39 @@ async function main() {
 
     const now = moment().tz('Europe/Warsaw');
     const startDate = now.format('YYYY-MM-DD HH:mm:ss');
-    console.log('Start time: ', startDate);
+    console.log(chalk.blue.bold('Start time:'), startDate);
 
     const currentIndex = await getCurrentIndexFromDatabase(connection);
-    const maxIndex = 9007199254740990;
+    const maxIndex = 9007199254740990; // Set maximum index if known
     const numWorkers = 4;
+    let workersIteration = 0;
 
-    console.log('Current index from database:', currentIndex);
+    console.log(chalk.blue.bold('Current index from database:'), currentIndex);
 
-    const workerFile = path.resolve(__dirname, 'worker.js');
-    const workerPromises = createWorkerPool(numWorkers, workerFile, currentIndex, maxIndex);
+    let startIndex = currentIndex + 1;
+    while (startIndex <= maxIndex) {
+        const workerFile = path.resolve(__dirname, 'worker.ts');
 
-    try {
-        await Promise.all(workerPromises);
-        console.log('All workers have finished processing');
-    } catch (error) {
-        console.error('Error in batch processing:', error);
-    } finally {
-        await connection.end();
+        const start = performance.now();
+        const workerPromises = createWorkerPool(numWorkers, workerFile, startIndex, maxIndex, workersIteration);
+
+        try {
+            await Promise.all(workerPromises);
+            const end = performance.now();
+            const executionTime = end - start;
+
+            console.log(chalk.green.bold('\nAll workers have finished processing iteration', workersIteration));
+            console.log(chalk.yellow.bold(`Average worker execution time: ${(executionTime / numWorkers).toFixed(2)} milliseconds`));
+        } catch (error) {
+            console.error(chalk.red.bold('Error in batch processing:'), error);
+        }
+
+        workersIteration++;
+        startIndex = currentIndex + 1 + (BATCH_SIZE * numWorkers * workersIteration);
     }
+
+    await connection.end();
+    console.log(chalk.blue.bold('Processing complete'));
 }
 
 main().catch(console.error);
